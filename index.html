@@ -292,7 +292,7 @@ const WORLDS = [
   { n: 'Take-Away Trail', c: '#fb923c', c2: '#b45309', ic: ['🍂', '🍁', '🍄', '🌰', '🎃'] },
   { n: 'Mix Mountain',    c: '#a78bfa', c2: '#5b21b6', ic: ['🪨', '⛰️', '🏔️', '🗻', '🌋'] },
   { n: 'Big Number Bay',  c: '#38bdf8', c2: '#0369a1', ic: ['🐚', '🦀', '🐠', '🐬', '🐳'] },
-  { n: 'Times Temple',    c: '#f87171', c2: '#991b1b', ic: ['⛩️', '🏮', '🐉', '🎎', '🏯'] },
+  { n: 'Times Temple',    c: '#f87171', c2: '#991b1b', ic: ['⛩️', '🏮', '🐉', '🎎', '🏯', '🐲', '🎋'] },
   { n: 'Master Dojo',     c: '#fbbf24', c2: '#92400e', ic: ['🥋', '🥷', '🏆', '💎', '👑'] },
 ];
 const SPECS = [
@@ -319,7 +319,9 @@ const SPECS = [
   { w: 4, op: 'mul', d1: 1, d2: 1, txt: 'Times tables (2 to 9)' },
   { w: 4, op: 'mul', d1: 2, d2: 1, txt: '2-digit \u00d7 1-digit' },
   { w: 4, op: 'mul', d1: 3, d2: 1, txt: '3-digit \u00d7 1-digit' },
+  { w: 4, op: 'mul', d1: 4, d2: 1, txt: '4-digit \u00d7 1-digit' },
   { w: 4, op: 'mul', d1: 2, d2: 2, txt: '2-digit \u00d7 2-digit' },
+  { w: 4, op: 'mul', d1: 5, d2: 1, txt: '5-digit \u00d7 1-digit' },
   { w: 4, op: 'mul', d1: 3, d2: 2, txt: '3-digit \u00d7 2-digit' },
   { w: 5, op: 'mul', d1: 4, d2: 2, txt: '4-digit \u00d7 2-digit' },
   { w: 5, op: 'mul', d1: 3, d2: 3, txt: '3-digit \u00d7 3-digit' },
@@ -339,6 +341,13 @@ function earthGrab(e, s) {           /* which earth bead (0 = nearest the beam) 
   if (s === e) return e < 4 ? e : -1;
   return Math.min(3, s - 1);
 }
+/* order-independent key, so 3+4 and 4+3 (or 3x4 and 4x3) count as the same problem */
+function pkey(p) {
+  const nums = p.kind === 'inline'
+    ? (p.text.replace(/ /g, '').match(/\d+/g) || [])
+    : p.terms.map(t => (t[0] < 0 ? '-' : '') + t[1]);
+  return p.answer + ':' + nums.slice().sort().join(',');
+}
 function problemText(p) {
   if (p.kind === 'inline') return p.text;
   return p.terms.map(([sg, v], i) => (i ? (sg > 0 ? ' + ' : ' ' + MINUS + ' ') : '') + fmt(v)).join('');
@@ -352,8 +361,16 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ---- storage ---- */
 const KEY = 'soroban-quest-v1';
-const defaults = () => ({ size: 10, sound: true, haptic: true, theme: 'wood', showValue: false, beads: 0, lv: {} });
-let S = (() => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) return Object.assign(defaults(), d); } catch (e) {} return defaults(); })();
+const defaults = () => ({ v: 2, size: 10, sound: true, haptic: true, auto: true, theme: 'wood', showValue: false, beads: 0, lv: {} });
+/* v1 -> v2: two multiplication levels were inserted (new #24 and #26), so shift saved progress */
+function migrate(s) {
+  const old = s.lv || {}, nl = {};
+  Object.keys(old).forEach(k => { k = +k; nl[k >= 24 ? k + 2 : k >= 23 ? k + 1 : k] = old[k]; });
+  if (nl[24] && nl[24].sets > 0) nl[23] = { sets: 3, best: 0.8 };
+  if (nl[26] && nl[26].sets > 0) nl[25] = { sets: 3, best: 0.8 };
+  s.lv = nl;
+}
+let S = (() => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) { const s = Object.assign(defaults(), d); if (!d.v) migrate(s); s.v = 2; return s; } } catch (e) {} return defaults(); })();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const LV = i => S.lv[i] || (S.lv[i] = { sets: 0, best: 0 });
 const sets = i => (S.lv[i] && S.lv[i].sets) || 0;
@@ -624,6 +641,7 @@ function openSettings() {
     <h2>Settings</h2>
     <label class="tg"><span>🔊 Sound</span><input type="checkbox" id="oSound" ${S.sound ? 'checked' : ''}><i></i></label>
     <label class="tg"><span>📳 Vibration</span><input type="checkbox" id="oHaptic" ${S.haptic ? 'checked' : ''}><i></i></label>
+    <label class="tg"><span>⚡ Auto-advance when the answer is right</span><input type="checkbox" id="oAuto" ${S.auto ? 'checked' : ''}><i></i></label>
     <label class="tg"><span>🔢 Show value of the beads</span><input type="checkbox" id="oValue" ${S.showValue ? 'checked' : ''}><i></i></label>
     <h3>Abacus style</h3>
     <div class="chips">${THEMES.map(t => `<button class="chip ${t.id === S.theme ? 'sel' : ''} ${cl < t.need ? 'lock' : ''}" data-t="${t.id}" style="font-size:13px">${cl < t.need ? '🔒 ' + t.need : t.n}</button>`).join('')}</div>
@@ -634,6 +652,7 @@ function openSettings() {
     <button class="go alt" id="oClose">Close</button>`);
   $('#oSound').onchange = e => { S.sound = e.target.checked; save(); if (S.sound) clack(); };
   $('#oHaptic').onchange = e => { S.haptic = e.target.checked; save(); buzz(30); };
+  $('#oAuto').onchange = e => { S.auto = e.target.checked; save(); };
   $('#oValue').onchange = e => { S.showValue = e.target.checked; save(); applyReadout(); };
   document.querySelectorAll('#sheet .chip[data-t]').forEach(c => c.onclick = () => {
     const t = THEMES.find(x => x.id === c.dataset.t);
@@ -658,7 +677,13 @@ $('#btnSettings').onclick = openSettings;
 /* ======================= GAME ======================= */
 let ab = null, G = null;
 function applyReadout() { const r = $('#readout'); r.hidden = !S.showValue; r.textContent = ab ? fmt(ab.value) : '0'; }
-function onAbChange(v) { if (S.showValue) $('#readout').textContent = fmt(v); }
+function onAbChange(v) {
+  if (S.showValue) $('#readout').textContent = fmt(v);
+  if (S.auto && G && G.cur && !G.lock && v === G.cur.p.answer) {
+    const cur = G.cur;   // short pause so the last bead is seen landing
+    setTimeout(() => { if (G && G.cur === cur && !G.lock && ab.value === cur.p.answer) check(); }, 220);
+  }
+}
 function ensureAbacus() {
   const w = $('#abWrap');
   if (!ab) ab = new Abacus(w, 6, onAbChange);
@@ -688,14 +713,16 @@ function updateHud() {
 }
 function startSet(i, size) {
   S.size = size; save();
-  G = { i, size, n: 0, clean: 0, streak: 0, best: 0, pts: 0, times: [], cur: null, t0: 0, lock: false };
+  G = { i, size, recent: [], n: 0, clean: 0, streak: 0, best: 0, pts: 0, times: [], cur: null, t0: 0, lock: false };
   $('#gLevel').textContent = `Level ${i + 1} · ${sets(i)}/3 sets`;
   show('game'); ensureAbacus(); nextProblem();
 }
 function nextProblem() {
   if (!G) return;
   if (G.n >= G.size) return finishSet();
-  const p = genProblem(LEVELS[G.i]);
+  let p, key, tries = 0;                       // never repeat any of the last 6 problems
+  do { p = genProblem(LEVELS[G.i]); key = pkey(p); tries++; } while (G.recent.includes(key) && tries < 60);
+  G.recent.push(key); if (G.recent.length > 6) G.recent.shift();
   G.cur = { p, missed: false, hinted: false, miss: 0 }; G.t0 = performance.now(); G.lock = false; ab.enabled = true;
   renderProblem(p); ab.setHint(null); ab.st.forEach(s => { s.h = 0; s.e = 0; }); ab.render(); applyReadout();
   $('#bSkip').hidden = true; updateHud();
