@@ -69,6 +69,9 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 .btn:active{transform:translateY(3px);box-shadow:0 2px 0 rgba(0,0,0,.35)}
 .btn.main{flex:1;background:linear-gradient(180deg,#4ade80,#16a34a);font-size:20px}
 .btn[hidden]{display:none}
+.btn:disabled{opacity:.4;filter:grayscale(.7);box-shadow:none}
+.btn.main.ready{animation:readyp 1s infinite}
+@keyframes readyp{50%{transform:scale(1.03);filter:brightness(1.15)}}
 .btn.sm{height:48px;font-size:15px}
 
 /* ---------- abacus ---------- */
@@ -166,7 +169,7 @@ body[data-theme=gold]{--f1:#ffd76a;--f2:#b8801a;--board:#2a1f08;--beam1:#e6b23a;
       <button class="btn" id="bClear" aria-label="Clear beads">↺</button>
       <button class="btn" id="bHint" aria-label="Hint">💡</button>
       <button class="btn sm" id="bSkip" hidden>Skip ⏭</button>
-      <button class="btn main" id="bCheck">✓ Check</button>
+      <button class="btn main" id="bCheck" disabled>Next ▶</button>
     </div>
   </section>
 </div>
@@ -361,7 +364,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ---- storage ---- */
 const KEY = 'soroban-quest-v1';
-const defaults = () => ({ v: 2, size: 10, sound: true, haptic: true, auto: true, theme: 'wood', showValue: false, beads: 0, lv: {} });
+const defaults = () => ({ v: 3, size: 10, sound: true, haptic: true, auto: false, theme: 'wood', showValue: false, beads: 0, lv: {} });
 /* v1 -> v2: two multiplication levels were inserted (new #24 and #26), so shift saved progress */
 function migrate(s) {
   const old = s.lv || {}, nl = {};
@@ -370,7 +373,7 @@ function migrate(s) {
   if (nl[26] && nl[26].sets > 0) nl[25] = { sets: 3, best: 0.8 };
   s.lv = nl;
 }
-let S = (() => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) { const s = Object.assign(defaults(), d); if (!d.v) migrate(s); s.v = 2; return s; } } catch (e) {} return defaults(); })();
+let S = (() => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) { const s = Object.assign(defaults(), d); if (!d.v) migrate(s); if ((d.v || 0) < 3) s.auto = false; s.v = 3; return s; } } catch (e) {} return defaults(); })();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const LV = i => S.lv[i] || (S.lv[i] = { sets: 0, best: 0 });
 const sets = i => (S.lv[i] && S.lv[i].sets) || 0;
@@ -641,8 +644,9 @@ function openSettings() {
     <h2>Settings</h2>
     <label class="tg"><span>🔊 Sound</span><input type="checkbox" id="oSound" ${S.sound ? 'checked' : ''}><i></i></label>
     <label class="tg"><span>📳 Vibration</span><input type="checkbox" id="oHaptic" ${S.haptic ? 'checked' : ''}><i></i></label>
-    <label class="tg"><span>⚡ Auto-advance when the answer is right</span><input type="checkbox" id="oAuto" ${S.auto ? 'checked' : ''}><i></i></label>
+    <label class="tg"><span>⚡ Auto-advance after a correct answer</span><input type="checkbox" id="oAuto" ${S.auto ? 'checked' : ''}><i></i></label>
     <label class="tg"><span>🔢 Show value of the beads</span><input type="checkbox" id="oValue" ${S.showValue ? 'checked' : ''}><i></i></label>
+    <div class="note" style="margin-top:0">Off: the answer is marked correct as soon as it is on the beads, then you tap <b>Next</b> when you are ready.</div>
     <h3>Abacus style</h3>
     <div class="chips">${THEMES.map(t => `<button class="chip ${t.id === S.theme ? 'sel' : ''} ${cl < t.need ? 'lock' : ''}" data-t="${t.id}" style="font-size:13px">${cl < t.need ? '🔒 ' + t.need : t.n}</button>`).join('')}</div>
     <div class="note">New styles unlock as you clear levels (${cl} cleared).</div>
@@ -652,7 +656,7 @@ function openSettings() {
     <button class="go alt" id="oClose">Close</button>`);
   $('#oSound').onchange = e => { S.sound = e.target.checked; save(); if (S.sound) clack(); };
   $('#oHaptic').onchange = e => { S.haptic = e.target.checked; save(); buzz(30); };
-  $('#oAuto').onchange = e => { S.auto = e.target.checked; save(); };
+  $('#oAuto').onchange = e => { S.auto = e.target.checked; save(); if (G && G.cur && $('#game').classList.contains('on')) $('#bCheck').hidden = S.auto; };
   $('#oValue').onchange = e => { S.showValue = e.target.checked; save(); applyReadout(); };
   document.querySelectorAll('#sheet .chip[data-t]').forEach(c => c.onclick = () => {
     const t = THEMES.find(x => x.id === c.dataset.t);
@@ -679,9 +683,9 @@ let ab = null, G = null;
 function applyReadout() { const r = $('#readout'); r.hidden = !S.showValue; r.textContent = ab ? fmt(ab.value) : '0'; }
 function onAbChange(v) {
   if (S.showValue) $('#readout').textContent = fmt(v);
-  if (S.auto && G && G.cur && !G.lock && v === G.cur.p.answer) {
+  if (G && G.cur && !G.lock && v === G.cur.p.answer) {
     const cur = G.cur;   // short pause so the last bead is seen landing
-    setTimeout(() => { if (G && G.cur === cur && !G.lock && ab.value === cur.p.answer) check(); }, 220);
+    setTimeout(() => { if (G && G.cur === cur && !G.lock && ab.value === cur.p.answer) solve(); }, 220);
   }
 }
 function ensureAbacus() {
@@ -713,7 +717,7 @@ function updateHud() {
 }
 function startSet(i, size) {
   S.size = size; save();
-  G = { i, size, recent: [], n: 0, clean: 0, streak: 0, best: 0, pts: 0, times: [], cur: null, t0: 0, lock: false };
+  G = { i, size, recent: [], solved: false, n: 0, clean: 0, streak: 0, best: 0, pts: 0, times: [], cur: null, t0: 0, lock: false };
   $('#gLevel').textContent = `Level ${i + 1} · ${sets(i)}/3 sets`;
   show('game'); ensureAbacus(); nextProblem();
 }
@@ -725,38 +729,34 @@ function nextProblem() {
   G.recent.push(key); if (G.recent.length > 6) G.recent.shift();
   G.cur = { p, missed: false, hinted: false, miss: 0 }; G.t0 = performance.now(); G.lock = false; ab.enabled = true;
   renderProblem(p); ab.setHint(null); ab.st.forEach(s => { s.h = 0; s.e = 0; }); ab.render(); applyReadout();
-  $('#bSkip').hidden = true; updateHud();
+  const nb = $('#bCheck'); nb.disabled = true; nb.classList.remove('ready'); nb.textContent = 'Next \u25b6'; nb.hidden = S.auto;
+  $('#bSkip').hidden = false; updateHud();
 }
 function floatText(txt) {
   const r = ab.root.getBoundingClientRect(), f = el('div', 'fl', txt);
   f.style.left = (r.left + r.width / 2 - 30) + 'px'; f.style.top = (r.top + 10) + 'px'; $('#fx').appendChild(f); setTimeout(() => f.remove(), 1000);
 }
-function check() {
-  if (!G || G.lock) return;
-  const c = G.cur;
-  if (ab.value === c.p.answer) {
-    G.lock = true; ab.enabled = false; G.times.push((performance.now() - G.t0) / 1000);
-    const clean = !c.missed && !c.hinted;
-    if (clean) { G.clean++; G.streak++; G.best = Math.max(G.best, G.streak); const add = Math.round(work(LEVELS[G.i])); G.pts += add; floatText('+' + add + ' ◉'); }
-    else { G.streak = 0; floatText('✓'); }
-    G.n++; updateHud(); sOK(); buzz([15, 40, 15]);
-    ab.root.classList.remove('ok'); void ab.root.offsetWidth; ab.root.classList.add('ok');
-    setTimeout(nextProblem, clean ? 650 : 900);
-  } else {
-    c.missed = true; c.miss++; G.streak = 0; updateHud(); sBad(); buzz([60, 40, 60]);
-    ab.root.classList.remove('shake'); void ab.root.offsetWidth; ab.root.classList.add('shake');
-    $('#bSkip').hidden = false;
-    if (c.miss >= 2 && !c.hinted) { c.hinted = true; ab.setHint(c.p.answer); toast('💡 Highlighted rods need a change'); }
-    else toast('Not yet, check the rods again');
-  }
+function solve() {
+  if (!G || G.lock || !G.cur) return;
+  G.lock = true; G.solved = true; ab.enabled = false; G.times.push((performance.now() - G.t0) / 1000);
+  const c = G.cur, clean = !c.hinted;
+  if (clean) { G.clean++; G.streak++; G.best = Math.max(G.best, G.streak); const add = Math.round(work(LEVELS[G.i])); G.pts += add; floatText('+' + add + ' \u25c9'); }
+  else { G.streak = 0; floatText('\u2713'); }
+  G.n++; updateHud(); sOK(); buzz([15, 40, 15]);
+  ab.root.classList.remove('ok'); void ab.root.offsetWidth; ab.root.classList.add('ok');
+  $('#bSkip').hidden = true;
+  if (S.auto) setTimeout(goNext, clean ? 650 : 900);
+  else { const b = $('#bCheck'); b.disabled = false; b.classList.add('ready'); b.textContent = G.n >= G.size ? 'Finish \u25b6' : 'Next \u25b6'; }
 }
+function goNext() { if (!G || !G.solved) return; G.solved = false; nextProblem(); }
 function skip() {
   if (!G || G.lock) return;
   G.lock = true; ab.enabled = false; G.times.push((performance.now() - G.t0) / 1000); G.streak = 0; G.n++;
+  $('#bSkip').hidden = true;
   const r = el('div', 'reveal', '= ' + fmt(G.cur.p.answer)); $('#problem').appendChild(r); updateHud();
-  setTimeout(nextProblem, 1500);
+  setTimeout(() => { G.solved = true; goNext(); }, 1500);
 }
-$('#bCheck').onclick = check;
+$('#bCheck').onclick = goNext;
 $('#bSkip').onclick = skip;
 $('#bClear').onclick = () => { if (G && !G.lock) { ab.clear(); buzz(10); } };
 $('#bHint').onclick = () => { if (G && !G.lock) { G.cur.hinted = true; ab.setHint(G.cur.p.answer); toast('💡 Highlighted rods need a change'); } };

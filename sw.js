@@ -1,4 +1,4 @@
-const CACHE = 'soroban-quest-v1';
+const CACHE = 'soroban-quest-v3';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'
